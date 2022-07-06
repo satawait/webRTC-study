@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>聊天室</title>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+</head>
+<body>
+    <h1>聊天室</h1>
+    <video width="1280" height="720" id="local_video"></video>
+    <video width="1280" height="720" id="remote_video"></video>
+    <span>姓名</span><input type="text" name="user_name" id="user_name">
+    <span>房间号</span><input type="text" name="room_id" id="room_id">
+    <input type="button" value="加入" id="join">
+    <script>
+        const WebSocketType = {
+            ERROR: 0,
+            SUCCESS: 1,
+            USER_LEAVE: 2,
+            CHECK_ROOM: 3,
+            CHECK_ROOM_SUCCESS: 4,
+            JOIN_ROOM_SUCCESS: 5,
+            ANSWER_VIDEO: 6,
+            RECEIVE_OFFER: 7,
+            ADD_ICE_CANDIDATE: 8,
+            RECEIVE_ANSWER: 9
+        }
+        const userName = document.querySelector('#user_name')
+        const join = document.querySelector('#join')
+        const roomId = document.querySelector('#room_id')
+        let peer, localStream, user, offerOption = {
+            offerToReceiveAudio: 1,
+            offerToReceiveVideo: 1
+        }, roomUsers = []
+        
+        const initPeerListen = () => {
+            // 收集自己的网络信息并发送给对端
+            peer.onicecandidate = (event) => {
+                if (event.candidate) { socket.emit(WebSocketType.ADD_ICE_CANDIDATE, { candidate: event.candidate, user: user }); }
+            };
+        }
+        const getDevices = async () => {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                console.log(devices);
+            } catch (error) {
+                console.error(error);
+                const msg = `getDevices error: ${error.name} : ${error.message}`;
+                alert(msg);
+            }
+        }
+        window.onbeforeunload = () => {
+            socket.emit(WebSocketType.USER_LEAVE, {
+                userName: userName.value,
+                sockId: sockId,
+                roomId: roomId.value
+            });
+        };
+        // 建立 socketio连接
+        const socket = io(`ws://127.0.0.1:4005}`) // 默认连接3000端口
+        socket.on(WebSocketType.CHECK_ROOM_SUCCESS, existRoomUsers => {
+            if (existRoomUsers && existRoomUsers.length > 1) {
+                alert('当前房间人数已满~请换个房间id');
+            } else {
+                roomUsers = [
+                    {
+                        userName: userName.value + '(我)',
+                        sockId: sockId,
+                        roomId: roomId.value
+
+                    }
+                ];
+            }
+        })
+        socket.on(WebSocketType.JOIN_ROOM_SUCCESS, _roomUsers => {
+            console.log('joinRoomSuccess client user:', _roomUsers);
+            const otherUser = _roomUsers.find(item => item.sockId !== sockId);
+            if (!otherUser) return false;
+            alert(`${otherUser.userName}加入了房间`);
+            roomUsers = [otherUser, {
+                userName: userName.value + '(我)',
+                sockId: sockId,
+                roomId: roomId.value
+            }];
+        })
+        socket.on(WebSocketType.USER_LEAVE, _roomUsers => {
+            console.log('userLeave client user:', _roomUsers);
+            if (!_roomUsers.length) {
+                sockId = '';
+            }
+            const serverSockIdArr = _roomUsers.map(item => item.sockId);
+            roomUsers.forEach(item => {
+                if (serverSockIdArr.indexOf(item.sockId) === -1) {
+                    alert(`${item.userName}离开了房间`);
+                    if (item.sockId === this.sockId) {
+                        sockId = '';
+                    }
+                }
+            });
+            roomUsers = _roomUsers;
+            roomUsers.forEach((item) => {
+            if (item.sockId === sockId) {
+                item.userName = item.userName + '(我)';
+            }
+            });
+        })
+        socket.on('disconnect', (message) => {
+            sockId = '';
+            console.log('client sock disconnect:', message);
+            socket.emit(WebSocketType.USER_LEAVE, user);
+        })
+        socket.on(WebSocketType.ANSWER_VIDEO, _user => {
+            // 创建本地视频流信息
+            const _localStream = await createLocalVideoStream();
+            localStream = _localStream;
+            document.querySelector('#local_video').srcObject = localStream;
+            peer = new RTCPeerConnection();
+            initPeerListen();
+            peer.addStream(localStream);
+            if (_user.sockId === sockId) {
+            // 接收方
+            } else {
+            // 发送方 创建 offer
+            const offer = await peer.createOffer(offerOption);
+            await peer.setLocalDescription(offer);
+            socket.emit(WebSocketType.RECEIVE_OFFER, { user, offer });
+            }
+        })
+        socket.on(WebSocketType.RECEIVE_OFFER, async (offer) => {
+            await peer.setRemoteDescription(offer);
+            const answer = await peer.createAnswer();
+            await peer.setLocalDescription(answer);
+            socket.emit(WebSocketType.RECEIVE_ANSWER, { answer, user: user });
+        })
+        socket.on(WebSocketType.RECEIVE_ANSWER, answer => {
+            peer.setRemoteDescription(answer)
+        })
+        socket.on(WebSocketType.ADD_ICE_CANDIDATE, async (candidate) => {
+            await peer.addIceCandidate(candidate);
+        })
+        peer.onaddstream = (event) => {
+            // 拿到对方的视频流
+            document.querySelector('#remote_video').srcObject = event.stream;
+        };
+        send.onclick = () => {
+            const message = msg.value
+            socket.emit(WebSocketType.CHECK_ROOM, 'check room')
+        }
+        function createMessage(user, data) {
+            return JSON.stringify({
+                user,
+                data
+            })
+        }
+    </script>
+</body>
+</html>
