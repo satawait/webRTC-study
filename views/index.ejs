@@ -14,6 +14,7 @@
     <span>姓名</span><input type="text" name="user_name" id="user_name">
     <span>房间号</span><input type="text" name="room_id" id="room_id">
     <input type="button" value="加入" id="join">
+    <input type="button" value="开启视频" id="openVideo">
     <script>
         const WebSocketType = {
             ERROR: 0,
@@ -25,10 +26,17 @@
             ANSWER_VIDEO: 6,
             RECEIVE_OFFER: 7,
             ADD_ICE_CANDIDATE: 8,
-            RECEIVE_ANSWER: 9
+            RECEIVE_ANSWER: 9,
+            CANCEL_SEND_VIDEO: 10,
+            RECEIVE_VIDEO: 11,
+            REJECT_RECEIVE_VIDEO: 12,
+            HANG_UP_VIDEO: 13,
+            TO_SEND_VIDEO: 14,
+            CONNECTION_SUCCESS: 15
         }
         const userName = document.querySelector('#user_name')
         const join = document.querySelector('#join')
+        const openVideo = document.querySelector('#openVideo')
         const roomId = document.querySelector('#room_id')
         let peer, localStream, user, offerOption = {
             offerToReceiveAudio: 1,
@@ -40,6 +48,11 @@
             peer.onicecandidate = (event) => {
                 if (event.candidate) { socket.emit(WebSocketType.ADD_ICE_CANDIDATE, { candidate: event.candidate, user: user }); }
             };
+            peer.onaddstream = (event) => {
+                // 拿到对方的视频流
+                document.querySelector('#remote_video').srcObject = event.stream;
+            };
+            peer.onclose = () => {}
         }
         const getDevices = async () => {
             try {
@@ -51,6 +64,27 @@
                 alert(msg);
             }
         }
+        const startVideoCancelCb = () => {
+            socket.emit(WebSocketType.CANCEL_SEND_VIDEO, user);
+        }
+        const receiveVideoCancelCb = () => {
+            socket.emit(WebSocketType.REJECT_RECEIVE_VIDEO, user);
+            VIDEO_VIEW.hideAllVideoModal();
+        }
+        const receiveVideoAnswerCb = () => {
+            socket.emit(WebSocketType.ANSWER_VIDEO, user);
+        }
+        const hangUpVideoCb = () => {
+            socket.emit(WebSocketType.HANG_UP_VIDEO, user);
+        }
+        const createLocalVideoStream = async () => {
+            const constraints = { audio: true, video: true };
+            const localStream = await navigator.mediaDevices.getUserMedia(constraints);
+            console.log('localStream:', localStream);
+            return localStream;
+        }
+        // 建立 socketio连接
+        const socket = io(`ws://127.0.0.1:4005}`) // 默认连接3000端口
         window.onbeforeunload = () => {
             socket.emit(WebSocketType.USER_LEAVE, {
                 userName: userName.value,
@@ -58,8 +92,16 @@
                 roomId: roomId.value
             });
         };
-        // 建立 socketio连接
-        const socket = io(`ws://127.0.0.1:4005}`) // 默认连接3000端口
+        socket.on(WebSocketType.CONNECTION_SUCCESS, (sockId) => {
+            sockId = sockId;
+            user = {
+                userName: userName.value + '(我)',
+                sockId: sockId,
+                roomId: roomId.value
+
+            }
+            console.log('connectionSuccess client sockId:', sockId);
+        });
         socket.on(WebSocketType.CHECK_ROOM_SUCCESS, existRoomUsers => {
             if (existRoomUsers && existRoomUsers.length > 1) {
                 alert('当前房间人数已满~请换个房间id');
@@ -111,6 +153,21 @@
             console.log('client sock disconnect:', message);
             socket.emit(WebSocketType.USER_LEAVE, user);
         })
+        socket.on(WebSocketType.CANCEL_SEND_VIDEO, _user => {
+            const infoTips = _user.sockId === sockId ? '您取消了发送视频' : '对方取消了发送视频';
+            alert(infoTips);
+        })
+        // 接收视频邀请
+        socket.on(WebSocketType.RECEIVE_VIDEO, (sender) => {
+            if (user.sockId === sender.sockId) return false;
+            // TODO 接受邀请
+            console.log(sender);
+        })
+        // 拒绝接收视频
+        socket.on(WebSocketType.REJECT_RECEIVE_VIDEO, (_user) => {
+            const infoTips = _user.sockId === sockId ? '您拒绝了接收视频' : '对方拒绝了接收视频';
+            alert(infoTips);
+        })
         socket.on(WebSocketType.ANSWER_VIDEO, _user => {
             // 创建本地视频流信息
             const _localStream = await createLocalVideoStream();
@@ -128,6 +185,15 @@
             socket.emit(WebSocketType.RECEIVE_OFFER, { user, offer });
             }
         })
+        socket.on(WebSocketType.HANG_UP_VIDEO, _user => {
+            const infoTips = _user.sockId === sockId ? '您挂断了视频' : '对方挂断了视频';
+            alert(infoTips);
+            this.peer.close();
+            this.peer = null;
+            VIDEO_VIEW.hideAllVideoModal();
+            document.querySelector('#remote_video').srcObject = null;
+            document.querySelector('#local_video').srcObject = null;
+        })
         socket.on(WebSocketType.RECEIVE_OFFER, async (offer) => {
             await peer.setRemoteDescription(offer);
             const answer = await peer.createAnswer();
@@ -140,13 +206,22 @@
         socket.on(WebSocketType.ADD_ICE_CANDIDATE, async (candidate) => {
             await peer.addIceCandidate(candidate);
         })
-        peer.onaddstream = (event) => {
-            // 拿到对方的视频流
-            document.querySelector('#remote_video').srcObject = event.stream;
-        };
-        send.onclick = () => {
-            const message = msg.value
-            socket.emit(WebSocketType.CHECK_ROOM, 'check room')
+        join.onclick = () => {
+            if (!sockId) {
+                alert('socket未连接成功,请刷新再尝试!');
+                window.location.reload();
+                return false;
+            }
+            socket.emit(WebSocketType.CHECK_ROOM, {
+                roomId: roomId.value,
+                sockId: sockId,
+                userName: userName.value
+            });
+        }
+        openVideo.onclick = () => {
+            socket.emit(WebSocketType.TO_SEND_VIDEO, user);
+            const receiveUser = roomUsers.find(item => item.sockId !== sockId)
+            // TODO 发出邀请
         }
         function createMessage(user, data) {
             return JSON.stringify({
