@@ -21,7 +21,13 @@ var port = normalizePort(process.env.PORT || '4005');
  */
 
 var server = http.createServer(app.callback());
-ioServer(server)
+const options = {
+  ioOptions: {
+      pingTimeout: 10000,
+      pingInterval: 5000
+  }
+}
+ioServer(server, options)
 
 /**
  * Listen on provided port, on all network interfaces.

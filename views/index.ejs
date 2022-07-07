@@ -9,8 +9,8 @@
 </head>
 <body>
     <h1>聊天室</h1>
-    <video width="1280" height="720" id="local_video"></video>
-    <video width="1280" height="720" id="remote_video"></video>
+    <video width="1280" height="720" id="local_video" src="" controls autoplay></video>
+    <video width="1280" height="720" id="remote_video" src="" controls autoplay></video>
     <span>姓名</span><input type="text" name="user_name" id="user_name">
     <span>房间号</span><input type="text" name="room_id" id="room_id">
     <input type="button" value="加入" id="join">
@@ -41,7 +41,7 @@
         let peer, localStream, user, offerOption = {
             offerToReceiveAudio: 1,
             offerToReceiveVideo: 1
-        }, roomUsers = []
+        }, roomUsers = [], sockId
         
         const initPeerListen = () => {
             // 收集自己的网络信息并发送给对端
@@ -69,40 +69,44 @@
         }
         const receiveVideoCancelCb = () => {
             socket.emit(WebSocketType.REJECT_RECEIVE_VIDEO, user);
-            VIDEO_VIEW.hideAllVideoModal();
         }
         const receiveVideoAnswerCb = () => {
+            console.log('emit ANSWER_VIDEO')
             socket.emit(WebSocketType.ANSWER_VIDEO, user);
         }
         const hangUpVideoCb = () => {
             socket.emit(WebSocketType.HANG_UP_VIDEO, user);
         }
         const createLocalVideoStream = async () => {
-            const constraints = { audio: true, video: true };
-            const localStream = await navigator.mediaDevices.getUserMedia(constraints);
-            console.log('localStream:', localStream);
-            return localStream;
+            try {
+                const constraints = { audio: true, video: true };
+                const localStream = await navigator.mediaDevices.getUserMedia(constraints);
+                console.log('localStream:', localStream);
+                return localStream;
+            } catch (error) {
+                console.log(error)
+            }
         }
         // 建立 socketio连接
-        const socket = io(`ws://127.0.0.1:4005}`) // 默认连接3000端口
-        window.onbeforeunload = () => {
-            socket.emit(WebSocketType.USER_LEAVE, {
-                userName: userName.value,
-                sockId: sockId,
-                roomId: roomId.value
-            });
-        };
-        socket.on(WebSocketType.CONNECTION_SUCCESS, (sockId) => {
-            sockId = sockId;
-            user = {
-                userName: userName.value + '(我)',
-                sockId: sockId,
-                roomId: roomId.value
-
-            }
-            console.log('connectionSuccess client sockId:', sockId);
+        const socket = io(`ws://127.0.0.1:4005`) // 默认连接3000端口
+        // window.onbeforeunload = async e => {
+        //     e.preventDefault();
+        //     e.returnValue = ' ';
+        // };
+        // window.onunload = async () => {
+        //     console.log('333')
+        //     await socket.emit(WebSocketType.USER_LEAVE, {
+        //         userName: userName.value,
+        //         sockId: sockId,
+        //         roomId: roomId.value
+        //     });
+        // };
+        socket.on(WebSocketType.CONNECTION_SUCCESS, (_sockId) => {
+            sockId = _sockId;
+            console.log('connectionSuccess client sockId:', _sockId);
         });
         socket.on(WebSocketType.CHECK_ROOM_SUCCESS, existRoomUsers => {
+            console.log(existRoomUsers)
             if (existRoomUsers && existRoomUsers.length > 1) {
                 alert('当前房间人数已满~请换个房间id');
             } else {
@@ -136,7 +140,7 @@
             roomUsers.forEach(item => {
                 if (serverSockIdArr.indexOf(item.sockId) === -1) {
                     alert(`${item.userName}离开了房间`);
-                    if (item.sockId === this.sockId) {
+                    if (item.sockId === sockId) {
                         sockId = '';
                     }
                 }
@@ -159,16 +163,18 @@
         })
         // 接收视频邀请
         socket.on(WebSocketType.RECEIVE_VIDEO, (sender) => {
+            console.log('接收到邀请', sender);
             if (user.sockId === sender.sockId) return false;
             // TODO 接受邀请
-            console.log(sender);
+            receiveVideoAnswerCb()
         })
         // 拒绝接收视频
         socket.on(WebSocketType.REJECT_RECEIVE_VIDEO, (_user) => {
             const infoTips = _user.sockId === sockId ? '您拒绝了接收视频' : '对方拒绝了接收视频';
             alert(infoTips);
         })
-        socket.on(WebSocketType.ANSWER_VIDEO, _user => {
+        socket.on(WebSocketType.ANSWER_VIDEO, async (_user) => {
+            console.log('ANSWER_VIDEO')
             // 创建本地视频流信息
             const _localStream = await createLocalVideoStream();
             localStream = _localStream;
@@ -188,9 +194,8 @@
         socket.on(WebSocketType.HANG_UP_VIDEO, _user => {
             const infoTips = _user.sockId === sockId ? '您挂断了视频' : '对方挂断了视频';
             alert(infoTips);
-            this.peer.close();
-            this.peer = null;
-            VIDEO_VIEW.hideAllVideoModal();
+            peer.close();
+            peer = null;
             document.querySelector('#remote_video').srcObject = null;
             document.querySelector('#local_video').srcObject = null;
         })
@@ -212,16 +217,20 @@
                 window.location.reload();
                 return false;
             }
-            socket.emit(WebSocketType.CHECK_ROOM, {
+            
+            user = {
                 roomId: roomId.value,
                 sockId: sockId,
                 userName: userName.value
-            });
+            }
+            socket.emit(WebSocketType.CHECK_ROOM, user);
         }
         openVideo.onclick = () => {
             socket.emit(WebSocketType.TO_SEND_VIDEO, user);
             const receiveUser = roomUsers.find(item => item.sockId !== sockId)
+            console.log(receiveUser)
             // TODO 发出邀请
+            // receiveVideoAnswerCb()
         }
         function createMessage(user, data) {
             return JSON.stringify({
